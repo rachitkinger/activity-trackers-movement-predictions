@@ -2,7 +2,7 @@
 title: "Practical Machine Learning"
 author: "Rachit Kinger"
 date: "5 September 2017"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
