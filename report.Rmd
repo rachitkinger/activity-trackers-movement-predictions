@@ -1,5 +1,5 @@
 ---
-title: "report"
+title: "Practical Machine Learning"
 author: "Rachit Kinger"
 date: "5 September 2017"
 output: html_document
@@ -114,7 +114,8 @@ library(parallel)
 library(foreach)
 library(doParallel)
 cluster <- makeCluster(detectCores())
-resgisterDOParallel(cluster)
+doParallel::registerDoParallel(cluster)
+
 
 # Random Forest model building  
 set.seed(583)
