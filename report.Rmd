@@ -9,7 +9,11 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Executive Summary  
+# Summary  
+Data from activity trackers was used to ascertain the quality of exercise. The activity data was broken into training data and validation data. Two models (random forest and linear discriminant analysis) were trained on the training data and validation data was used to determine which model had higher accuracy. Principle Component Analysis was performed on the data set to for computational ease, and also because quite a few variables were correlated. 
+
+Random Forest was the finally selected model because it had a 98% out-of-sample accuracy. The model was then applied on test data which had 20 observations, and it had a 100% accuracy on that.
+
 
 # Introduction  
 ### About the data sets  
@@ -22,4 +26,137 @@ I'm grateful to the authors of the study for allowing their data to be used for 
 A short description of the datasets content from the authors’ website:  
 “Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).  
 
-Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg)."
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg)."  
+
+# Feature extraction  
+We first load the data in the environment and separate it into training, validation and testing.  
+```{r echo = TRUE}
+library(caret)
+trainingURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training_raw <- read.csv(url(trainingURL))
+testing_raw <- read.csv(url(testingURL))
+#split training into training and validation sets
+set.seed(582)
+inTrain <- createDataPartition(training_raw$classe, p = 0.8, list = FALSE)
+training_unclean <- training_raw[inTrain,]
+validation_unclean <- training_raw[-inTrain,]
+```
+
+## Exploring and Preprocessing data  
+To get the data ready for model building we explore the data and look for red flags like NA's, variables with near zero variance and multicollinearity.  
+
+#### Remove NAs  
+
+``` {r echo = TRUE}
+# remove NAs
+colNAstatus <- sapply(training_unclean, function(x) mean(is.na(x)))
+plot(colNAstatus) #visually inspect if variables contain large amount of NAs
+```
+
+From the above figure we can clearly see that there are many columns which contain a very large number of NA's and the remaining columns all contain almost `0` NAs. So we can remove columns that contain a large number of NAs.
+
+```{r echo = TRUE}
+#columns with >95% NAs will be removed
+NAcols    <- colNAstatus > 0.95
+training_noNAs <- training_unclean[,(NAcols == FALSE)]
+validation_noNas <- validation_unclean[,(NAcols == FALSE)]
+testing_noNAs <- testing_raw[,(NAcols == FALSE)]
+
+#also remove the first 5 columns since they contain id variables  
+training_noNAs <- training_noNAs[,-(1:5)]
+validation_noNas <- validation_noNas[,-(1:5)]
+testing_noNAs <- testing_noNAs[,-(1:5)]
+```
+
+#### Removing Variables with near zero variance  
+
+```{r echo = TRUE}
+nzv <- nearZeroVar(training_noNAs, saveMetrics = TRUE) #identify nearZeroVar()
+training <- training_noNAs[,row.names(nzv[nzv$nzv == FALSE,])] #training set now contains 54 vars including classe
+validation <- validation_noNas[,row.names(nzv[nzv$nzv == FALSE,])] #validation set now contains 54 vars including classe
+testing <- testing_noNAs[,c(row.names(nzv[nzv$nzv == FALSE,])[1:53],
+                            colnames(testing_noNAs)[88])]  #testing contains the same set of variables as training except for the variable classe which is what we are trying to predict
+```
+
+#### Determining Multicollinearity  
+We still have 53 variables and want to check if we can further reduce variables that are highly correlated with each other.  
+```{r echo = TRUE}
+library(corrplot)
+cor_matrix <- cor(training[,-54]) #54th column is classe
+corrplot(cor_matrix, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0,0,0))
+```
+
+Darker colours in the above figure tell us that there are many correlated variables and that we can probably benefit by running principal component analysis (PCA) as part of our preprocessing.  
+
+#### PCA for feature extraction  
+We run PCA with a threshold of 95%. This will also help in reducing computational load and a faster processing time.  
+```{r echo = TRUE}
+prepca <- preProcess(training[,-54], method = "pca", thresh = 0.95)
+trainingPCA <- predict(prepca, training)
+validationPCA <- predict(prepca, validation)
+testingPCA <- predict(prepca, testing)
+dim(trainingPCA) # now reduced to 25 variables including classe variable
+```
+
+# Model Building  
+Two models were considered for this analysis:  
+1. Random Forest  
+2. Linear Discriminant Analysis  
+
+We will use cross validation with 3 folds.
+
+```{r echo=TRUE}
+#make clusters for parallel processing
+library(iterators)
+library(parallel)
+library(foreach)
+library(doParallel)
+cluster <- makeCluster(detectCores())
+resgisterDOParallel(cluster)
+
+# Random Forest model building  
+set.seed(583)
+mod2Control <- trainControl(method = "cv", number = 3, allowParallel = TRUE) #cross validation
+mod_rf <- train(classe ~ ., data = trainingPCA, method = "rf", trControl=mod2Control)
+
+# Linear Discriminant Analysis model building
+set.seed(582)
+mod1Control <- trainControl(method = "cv", number = 3, allowParallel = TRUE) #cross validation
+mod_lda <- train(classe ~ ., data = trainingPCA, method = "lda", trControl=mod1Control)
+
+```
+
+Model comparison on in-sample accuracy.  
+```{r echo = TRUE, eval = TRUE}
+mod_rf
+```
+```{r echo = TRUE, eval = TRUE}
+mod_lda
+```
+Clearly the in-sample of the Random Forest (~96%) is vastly superior to that of LDA (53%). Because of this reason we will drop the LDA model at this point and proceed with Random Forest.  
+
+### Testing on validation set  
+```{r echo = TRUE, eval = TRUE}
+pred_rf_validation <- predict(mod_rf, validationPCA)
+confusionMatrix(pred_rf_validation, validationPCA$classe)
+```
+The Random Forest model has a **98% accuracy** on the validation set with a **sensitivity of >96%** for each prediction class, which, surprisingly is even better than it's in-sample accuracy. 
+
+We will now use this model on the testing set.  
+```{r echo = TRUE}
+pred_rf_test <- predict(mod_rf, testingPCA)
+```
+
+Below are the results which have been checked against the results provided by Coursera and surprisingly, the accuracy on testing data is 100%.  
+```{r echo = TRUE}
+data.frame(problem_id = testingPCA[,1], classe = pred_rf_test)
+```
+
+**END OF REPORT** 
+
+
+
+
+
